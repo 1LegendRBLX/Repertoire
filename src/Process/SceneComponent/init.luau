@@ -1,4 +1,4 @@
---!strict
+--!nonstrict
 local SequenceComponent = require("@self/SequenceComponent")
 local AccentComponent = require("./AccentComponent")
 
@@ -28,7 +28,7 @@ end
 
 function SceneComponent.Cleanup(self: SceneComponent)
 	for _, Sequence in self.SequenceComponents do
-		Sequence:Destroy()
+		(Sequence :: SequenceComponent):Destroy()
 	end
 	
 	for _, Accent in self.AccentComponents do

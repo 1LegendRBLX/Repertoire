@@ -1,4 +1,4 @@
---!strict
+--!nonstrict
 local Root = script.Parent.Parent.Parent
 
 local Signal = require(Root.Signal)
@@ -215,9 +215,11 @@ function AccentComponent.Despawn(self: AccentComponent, Inst: Instance)
 	self.OnDespawned:Fire(Inst)
 	local jmosSafetyCheck
 	jmosSafetyCheck = task.delay(4, function ()
-		if not Inst and not Inst.Parent then return end
-		warn('I think sumt is wrong! Emergency destory instance protocol is activating!!!!')
-		Inst:Destroy()
+		if not Inst or not Inst.Parent then return end
+
+		warn('I think sumt is wrong! Emergency destory instance protocol is activating!!!!');
+		
+		(Inst::any):Destroy()
 		jmosSafetyCheck = nil
 	end)
 	repeat task.wait() until self._despawnDone

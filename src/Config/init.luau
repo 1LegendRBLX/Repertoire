@@ -1,4 +1,6 @@
+--!nonstrict
 local TweenS = game:GetService('TweenService')
+
 local ForceMod = require('./Lib/ForceMod')
 
 local Config = {}

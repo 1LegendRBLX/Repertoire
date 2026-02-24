@@ -1,4 +1,4 @@
---!strict
+--!nonstrict
 local Repertoire = require(game:GetService("ReplicatedStorage").Packages.Repertoire)
 
 local Reactions = Repertoire.Reactions
