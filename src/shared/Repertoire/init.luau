@@ -1,4 +1,4 @@
---!strict
+--!nonstrict
 local AccentComponent = require(script.Process.AccentComponent)
 local SceneComponent = require(script.Process.SceneComponent)
 
