@@ -1,25 +1,30 @@
---!nonstrict
-local TweenS = game:GetService("TweenService")
+--!strict
+local TweenService = game:GetService("TweenService")
+
+local Root = script.Parent.Parent
 
 local ForceMod = require("./Lib/ForceMod")
+local Promise = require(Root.Promise)
 
-local Config = {}
-
-Config.Settings = {
-	Clone = true,
-	SpawnRateThreshold = 0.1,
+local Config = {
+	Settings = {
+		Clone = true,
+		Logging = 5,
+		SpawnRateThreshold = 0.1,
+	},
 }
 
-type AccentCompnent = any
+type AccentComponent = any
+
 export type ApplyRandomNum = (_: any?, Properties: { Min: number, Max: number, Weight: number? }) -> number
 export type ApplyNum = (_: any?, Properties: { Num: number }) -> number
 
-local function ApplyNum(_: any?, Properties: { Num: number })
+local function ApplyNum(_: any?, Properties: { Num: number }): number
 	Properties = Properties or { Num = 1 }
 	return Properties.Num
 end
 
-local function ApplyRandomNum(_: any?, Properties: { Min: number, Max: number, Weight: number? })
+local function ApplyRandomNum(_: any?, Properties: { Min: number, Max: number, Weight: number? }): number
 	local Min, Max, Weight = Properties.Min, Properties.Max, Properties.Weight
 	return math.random(Min, Max) / (Weight or 1)
 end
@@ -93,15 +98,14 @@ Config.Reactions = {
 				return
 			end
 
-			-- local IgnoreType = {
-			-- 	Welds = { "Weld", "WeldConstraint" },
-			-- 	Motors = { "Motor", "Motor6D" },
-			-- }
-
 			for _, Joint in Parent:GetJoints() do
 				local IgnoreJoint = (Properties and Properties.IgnoreJoints)
-				local TargetType = IgnoreJoint and Properties.IgnoreJoints
-				if TargetType and (not Joint:IsA(TargetType[1]) or not Joint:IsA(TargetType[2])) then
+
+				if IgnoreJoint == "Welds" and Joint:IsA("Weld") then
+					continue
+				end
+
+				if IgnoreJoint == "Motors" and Joint:IsA("Motor6D") then
 					continue
 				end
 
@@ -122,57 +126,62 @@ Config.Reactions = {
 	end,
 
 	TweenScale = function(Inst: Instance, Properties: { Scale: number, TweenInfo: TweenInfo })
-		Properties = Properties
-			or { Scale = 0.001, TweenInfo = TweenInfo.new(1, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut) }
+		return Promise.new(function(resolve)
+			local Scale = Properties.Scale or 0.001
+			local Info = Properties.TweenInfo
 
-		local Scale = Properties.Scale or 0.001
-		local Info = Properties.TweenInfo
+			local Tween
 
-		local Tween
+			if Inst:IsA("BasePart") then
+				Tween = TweenService:Create(Inst, Info, { Size = Vector3.one * Scale })
+			elseif Inst:IsA("Model") then
+				local NumVal = Instance.new("NumberValue")
+				NumVal.Value = Inst:GetScale()
 
-		print('tween!', Inst)
+				local ChangedConnection
+				ChangedConnection = NumVal.Changed:Connect(function()
+					Inst:ScaleTo(NumVal.Value)
+				end)
 
-		if Inst:IsA("BasePart") then
-			Tween = TweenS:Create(Inst, Info, { Size = Vector3.one * Scale })
+				Tween = TweenService:Create(NumVal, Info, { Value = Scale })
+
+				Tween.Completed:Once(function()
+					ChangedConnection:Disconnect()
+					resolve()
+				end)
+			else
+				warn(`[{script.Name}] Unknown Instance type. Should be a BasePart or Model`)
+			end
+
 			Tween:Play()
-		elseif Inst:IsA("Model") then
-			local ChangedConnection: RBXScriptConnection
-			local NumVal = Instance.new("NumberValue")
-			NumVal.Value = Inst:GetScale()
 
-			Tween = TweenS:Create(NumVal, Info, { Value = Scale })
-			Tween:Play()
-			Tween.Completed:Once(function()
-				ChangedConnection:Disconnect()
-			end)
-
-			ChangedConnection = NumVal.Changed:Connect(function()
-				Inst:ScaleTo(NumVal.Value)
-			end)
-		end
-
-		Tween.Completed:Wait()
-		print('Complete')
+			if Inst:IsA("BasePart") then
+				Tween.Completed:Once(resolve)
+			end
+		end)
 	end,
 
-	RandomColorPallette = function(Inst: Instance, Properties: { Palette: { Color3 } })
-		local Palette = Properties.Palette
-		if not Palette then
-			return
-		end
-
-		local ChosenColor = Palette[math.random(1, #Palette)]
-
-		if Inst:IsA("BasePart") then
-			Inst.Color = ChosenColor
-		elseif Inst:IsA("Model") then
-			for _, basepart: Instance in pairs(Inst:GetDescendants()) do
-				if not basepart:IsA("BasePart") then
-					continue
-				end
-				basepart.Color = ChosenColor
+	RandomColorPalette = function(Inst: Instance, Properties: { Palette: { Color3 } })
+		return Promise.try(function()
+			local Palette = Properties.Palette
+			if not Palette then
+				return
 			end
-		end
+
+			local Chosen = Palette[math.random(1, #Palette)]
+
+			if Inst:IsA("BasePart") then
+				Inst.Color = Chosen
+			else
+				for _, Part in Inst:GetDescendants() do
+					if not Part:IsA("BasePart") then
+						continue
+					end
+
+					Part.Color = Chosen
+				end
+			end
+		end)
 	end,
 
 	SetScale = function(Inst: Instance, Properties: { Scale: number, UseMultiplication: boolean? })
@@ -193,13 +202,13 @@ Config.Reactions = {
 		ApplyAssetScale(Inst, Scale, UseMultiplication)
 	end,
 
-	SpawnAccent = function(Inst: Instance, Properties: { AccentComponent: AccentCompnent, SpawnPosition: Vector3? })
+	SpawnAccent = function(Inst: Instance, Properties: { AccentComponent: AccentComponent, SpawnPosition: Vector3? })
 		if not Properties or not Properties.AccentComponent then
 			return
 		end
 
 		local Position = Properties and Properties.SpawnPosition or (Inst :: BasePart).Position
-		Properties.AccentComponent:Spawn(Position)
+		return Properties.AccentComponent:Spawn(Position)
 	end,
 
 	Force = function(
@@ -208,7 +217,7 @@ Config.Reactions = {
 			ParentTo: Instance?,
 		}) | {}
 	)
-		local TrueProperties = Properties or {}
+		local TrueProperties = Properties or {} :: any
 		local ParentTo = TrueProperties.ParentTo or Inst
 		ForceMod.ApplyForce(ParentTo, TrueProperties)
 	end,
@@ -221,13 +230,13 @@ Config.Validation = {
 		Config.Actions.SpawningTime,
 	},
 	Model = {
-		Config.Reactions.BreakWelds,
+		Config.Reactions.BreakJoints,
 		Config.Reactions.TweenScale,
 		Config.Actions.Lifetime,
 		Config.Actions.RandomLifetime,
 	},
 	BasePart = {
-		Config.Reactions.BreakWelds,
+		Config.Reactions.BreakJoints,
 		Config.Reactions.TweenScale,
 		Config.Actions.Lifetime,
 		Config.Actions.RandomLifetime,
@@ -240,6 +249,6 @@ Config.Validation = {
 		Config.Actions.AddCenterAttachment,
 		Config.Actions.MutateSpawnPart,
 	},
-} :: { [string]: any }
+} :: { [string]: { any } }
 
 return Config

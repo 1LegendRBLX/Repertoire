@@ -1,256 +1,179 @@
---!nonstrict
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local RunService = game:GetService("RunService")
+--!strict
+local Root = script.Parent.Parent.Parent
 
 local Config = require("../Config")
-local Signal = require(ReplicatedStorage.Packages.Signal)
-
-local CACHED_PART = Instance.new("Part")
-CACHED_PART.Name = "AccentPart"
-CACHED_PART.Size = Vector3.one * 1
-CACHED_PART.CanCollide = false
-CACHED_PART.CanQuery = false
-CACHED_PART.Anchored = true
-CACHED_PART.Transparency = 0.5
-
-local PART_CLASS_NAMES = {
-	"Part",
-	"Model",
-	"MeshPart",
-	"TrussPart",
-	"CornerWedge",
-}
+local Promise = require(Root.Promise)
+local Signal = require(Root.Signal)
 
 local AccentComponent = {}
 AccentComponent.__index = AccentComponent
 
-type ActionBuilder<P> = {
-	new: (self: ActionBuilder<P>) -> AccentComponent,
-	Hook: (self: ActionBuilder<P>, AccentSignal: Signal.Signal<...any>) -> ActionBuilder<P>,
-	Props: (self: ActionBuilder<P>, Props: P?) -> AccentComponent,
-}
+local Builder = {}
+Builder.__index = Builder
 
-export type AccentSettings = typeof(Config.Settings)
+type Handler<P> = (Instance, P) -> ...any?
+
+export type BuilderConfig<T> = {
+	Handler: Handler<T>,
+	Props: T,
+	Connection: Signal.Connection?,
+}
 
 export type AccentComponent = typeof(setmetatable(
 	{} :: {
 		Instance: Instance,
 		ClassName: string,
-		AccentPart: Part?,
 		ParentTo: Instance,
-		Settings: AccentSettings,
+		Logging: boolean,
 
-		CloneStorage: { Instance },
-
-		OnTouched: Signal.Signal<Instance, BasePart>,
-		OnDespawned: Signal.Signal<Instance>,
 		OnSpawned: Signal.Signal<Instance>,
+		OnDespawned: Signal.Signal<Instance>,
+		OnTouched: Signal.Signal<Instance>,
 
-		_actionMap: {
-			[string]: boolean,
-		},
+		CloneStorage: { [Instance]: true },
 
-		_reactions: {
-			{
-				Handler: (Instance, any) -> any?,
-				Connection: Signal.Connection?,
-				Props: any,
-			}
-		},
-
-		_actions: {
-			{
-				Handler: (Instance, any) -> any?,
-				Props: any,
-			}
-		},
-		_despawnDone: boolean,
-		_map: { [number]: boolean },
+		_actions: { [Handler<any>]: BuilderConfig<any> },
+		_reactions: { [Signal.Signal<any>]: { BuilderConfig<any> } },
 	},
 	AccentComponent
 ))
 
---[=[
-	@private
-]=]
-local function isBasePartOrModelClass(Part: Instance): boolean
-	for _, ClassName in PART_CLASS_NAMES do
-		if ClassName == Part.ClassName then
-			return true
-		end
-	end
+export type Builder<T> = typeof(setmetatable(
+	{} :: {
+		Config: BuilderConfig<T>,
+		Accent: AccentComponent,
+	},
+	Builder
+))
 
-	return false
+function Builder.new<T>(Config: BuilderConfig<T>, Accent: AccentComponent): Builder<T>
+	return setmetatable({
+		Config = Config,
+		Accent = Accent,
+	}, Builder)
 end
 
---[=[
-	@private
-]=]
-local function getBuilder<T, P>(
-	Data: { Handler: (T, P) -> any?, Props: P, Connection: Signal.Connection? },
-	ReturnObject: T
-): ActionBuilder<P>
-	local Builder = {} :: ActionBuilder<P>
+function Builder.Hook<T>(self: Builder<T>, Sig: Signal.Signal<any>): Builder<T>
+	local Accent = self.Accent
 
-	function Builder:new()
-		return ReturnObject
-	end
-
-	function Builder:Hook(AccentSignal: Signal.Signal<...any>)
-		local IsSignal = AccentSignal == (ReturnObject :: any).OnDespawned
-		local myCount = math.random(1, 99999999)
-		if IsSignal then
-			(ReturnObject :: any)._map[myCount] = false
-		end
-
-		Data.Connection = AccentSignal:Connect(function(...)
-			Data.Handler(..., Data.Props)
-
-			if not IsSignal then
-				return
-			end
-
-			print('Complete');
-			(ReturnObject :: any):_completeReaction(myCount)
-		end)
-
-		return Builder
-	end
-
-	function Builder:Props(Props: P)
-		Data.Props = Props
-		return ReturnObject
-	end
-
-	return Builder
-end
-
-function AccentComponent.new(Inst: Instance, AccentSettings: AccentSettings?): AccentComponent
-	if not Inst then
-		error(`[{script.Name}] Instance is invalid`)
-	end
-
-	AccentSettings = AccentSettings or {} :: any
-
-	local Settings = {} :: AccentSettings
-	for Key, Value in Config.Settings :: any do
-		(Settings :: any)[Key] = (AccentSettings :: any)[Key] or Value
-	end
-
-	return (
-		setmetatable({
-			Settings = Settings,
-			ParentTo = workspace,
-			Instance = Inst:Clone(),
-			ClassName = Inst.ClassName,
-
-			CloneStorage = {},
-
-			OnDespawned = Signal.new(),
-			OnSpawned = Signal.new(),
-			OnTouched = Signal.new(),
-
-			_actionMap = {}, -- action name map for O(1)
-			_reactions = {},
-			_actions = {},
-			_map = {},
-			_despawnDone = false,
-		}, AccentComponent) :: any
-	) :: AccentComponent
-end
-
-function AccentComponent.AddAction<T, P>(self: AccentComponent, Handler: (T, P) -> any?): ActionBuilder<P>
-	local ReturnObject = self
-
-	local ActionData = {
-		Handler = Handler :: (T, P) -> any?,
-		Connection = nil :: any,
-		Props = (nil :: any) :: P,
-	}
-
-	table.insert(self._actions :: any, ActionData)
-
-	return getBuilder(ActionData, ReturnObject)
-end
-
-function AccentComponent.AddReaction<T, P>(self: AccentComponent, Handler: (T, P) -> any?): ActionBuilder<P>
-	local ReturnObject = self
-
-	local ReactionData = {
-		Handler = Handler :: (T, P) -> any?,
-		Connection = nil :: Signal.Connection?,
-		Props = (nil :: any) :: P,
-	}
-
-	table.insert(self._reactions :: any, ReactionData)
-
-	return getBuilder(ReactionData, ReturnObject)
-end
-
-function AccentComponent.Spawn(self: AccentComponent, SpawnPosition: Vector3, ParentTo: Instance?): AccentComponent
-	self.ParentTo = ParentTo or self.ParentTo
-
-	local IsBasePartOrModel = isBasePartOrModelClass(self.Instance)
-	if not IsBasePartOrModel then
-		self.AccentPart = self:_createPart(SpawnPosition)
-	end
-
-	local RandomizeLifetime = self:_hasAction("RandomLifetime")
-
-	local SpawnProperties = {
-		SpawnCount = self:_callAction("Count") or self:_callAction("RandomCount") or 1,
-		LifeTime = self:_callAction("Lifetime") or self:_callAction("RandomLifetime") or 5,
-	}
-
-	for i = 1, SpawnProperties.SpawnCount do
-		local NewClone, ClonePrimary = self:_cloneInstance(SpawnPosition)
-		NewClone.Parent = self.AccentPart or self.ParentTo
-
-		if RunService:IsServer() then
-			if ClonePrimary then
-				ClonePrimary:SetNetworkOwner(nil)
-			end
-		end
-
-		self.OnSpawned:Fire(NewClone)
-
-		SpawnProperties.LifeTime = RandomizeLifetime and self:_callAction("RandomLifetime") or SpawnProperties.LifeTime
-		task.delay(SpawnProperties.LifeTime, function()
-			if not NewClone.Parent and not table.find(self.CloneStorage, NewClone) then
-				return
-			end
-			self:Despawn(NewClone)
-		end)
-	end
+	Accent._reactions[Sig] = Accent._reactions[Sig] or {}
+	table.insert(Accent._reactions[Sig], self.Config)
 
 	return self
 end
 
-function AccentComponent.Despawn(self: AccentComponent, Inst: Instance)
-	local index = table.find(self.CloneStorage, Inst)
-	table.remove(self.CloneStorage, index)
+function Builder.Props<T>(self: Builder<T>, Props: T): AccentComponent
+	self.Config.Props = Props
+	return self.Accent
+end
 
-	self.OnDespawned:Fire(Inst)
-	local jmosSafetyCheck
-	jmosSafetyCheck = task.delay(4, function()
-		if not Inst or not Inst.Parent then
-			return
+function AccentComponent.new(Target: Instance, Settings: any?): AccentComponent
+	local MergedSettings = {}
+
+	for k, v in Config.Settings :: any do
+		MergedSettings[k] = Settings and Settings[k] or v
+	end
+
+	return setmetatable({
+		Instance = Target:Clone(),
+		ClassName = Target.ClassName,
+		Settings = MergedSettings,
+		Logging = MergedSettings.Logging or false,
+
+		ParentTo = workspace :: Instance,
+
+		OnSpawned = Signal.new(),
+		OnDespawned = Signal.new(),
+		OnTouched = Signal.new(),
+
+		CloneStorage = {},
+
+		_actions = {},
+		_reactions = {},
+	}, AccentComponent)
+end
+
+function AccentComponent.AddAction<P>(self: AccentComponent, Handler: Handler<P>): Builder<P>
+	local ConfigData: BuilderConfig<P> = {
+		Handler = Handler,
+		Connection = nil,
+		Props = nil :: any,
+	}
+
+	self._actions[Handler] = ConfigData
+
+	return Builder.new(ConfigData, self)
+end
+
+function AccentComponent.AddReaction<P>(self: AccentComponent, Handler: Handler<P>): Builder<P>
+	local ConfigData: BuilderConfig<P> = {
+		Handler = Handler,
+		Connection = nil,
+		Props = nil :: any,
+	}
+
+	return Builder.new(ConfigData, self)
+end
+
+function AccentComponent.Spawn(self: AccentComponent, position: Vector3, parent: Instance?): Promise.Promise
+	if self.Logging then
+		print("[Accent] Spawn requested")
+	end
+
+	return Promise.try(function()
+		self.ParentTo = parent or self.ParentTo
+
+		local count = self:_runAction(Config.Actions.RandomCount) or 1
+		local lifetime = self:_runAction(Config.Actions.RandomLifetime) or 5
+
+		for i = 1, count do
+			local Clone = self:_clone(position)
+			Clone.Parent = self.ParentTo
+
+			if self.Logging then
+				print("[Accent] Clone spawned")
+			end
+
+			self.OnSpawned:Fire(Clone)
+
+			self:_executeReactions(self.OnSpawned, Clone)
+				:andThen(function()
+					self.OnSpawned:Fire(Clone)
+				end)
+				:catch(warn)
+
+			task.delay(lifetime, function()
+				if self.CloneStorage[Clone] then
+					self:Despawn(Clone)
+				end
+			end)
 		end
-
-		warn("I think sumt is wrong! Emergency destory instance protocol is activating!!!!");
-
-		(Inst :: any):Destroy()
-		jmosSafetyCheck = nil
 	end)
-	repeat
-		task.wait()
-	until self._despawnDone
-	Inst:Destroy()
-	if jmosSafetyCheck then
-		task.cancel(jmosSafetyCheck)
+end
+
+function AccentComponent.Despawn(self: AccentComponent, Target: Instance): Promise.Promise?
+	if not self.CloneStorage[Target] then
+		return nil
 	end
 
-	return self
+	if self.Logging then
+		print("[Accent] Despawn requested:", Target)
+	end
+
+	self.CloneStorage[Target] = nil
+	self.OnDespawned:Fire(Target)
+
+	return self:_executeReactions(self.OnDespawned, Target):timeout(5):finally(function()
+		if self.Logging then
+			print("[Accent] Despawn reactions complete:", Target)
+		end
+
+		self.OnDespawned:Fire(Target)
+
+		if Target then
+			Target:Destroy()
+		end
+	end)
 end
 
 function AccentComponent.Destroy(self: AccentComponent)
@@ -258,83 +181,54 @@ function AccentComponent.Destroy(self: AccentComponent)
 	setmetatable(self :: any, nil)
 end
 
-function AccentComponent._completeReaction(self: AccentComponent, HandlerIndex: number)
-	if self._map[HandlerIndex] ~= nil then
-		self._map[HandlerIndex] = true
+function AccentComponent._executeReactions(
+	self: AccentComponent,
+	Sig: Signal.Signal<any>,
+	Target: Instance
+): Promise.Promise
+	local Reactions = self._reactions[Sig]
+
+	if not Reactions then
+		return Promise.resolve()
 	end
 
-	for i, v in self._map do
-		if not v then
-			return
+	if self.Logging then
+		print("[Accent] Executing reactions:", #Reactions)
+	end
+
+	local Promises = table.create(#Reactions) :: { Promise.Promise }
+
+	for _, Reaction in Reactions do
+		table.insert(Promises :: any, Promise.try(Reaction.Handler, Target, Reaction.Props))
+	end
+
+	return Promise.all(Promises):andThen(function()
+		if self.Logging then
+			print("[Accent] All reactions finished:", Target)
 		end
-	end
-
-	self._despawnDone = true
+	end)
 end
 
--- temp
-function AccentComponent._hasAction(self: AccentComponent, ActionName: string, ...: any): boolean
-	for i, v in Config.Actions :: any do
-		if i ~= ActionName then
-			continue
-		end
+function AccentComponent._runAction(self: AccentComponent, Handler: Handler<any>): ...any?
+	local Data = self._actions[Handler]
 
-		for _, j in self._actions do
-			if j.Handler == v then
-				return true
-			end
-		end
+	if not Data then
+		return nil
 	end
 
-	return false
+	return Handler(nil :: any, Data.Props)
 end
 
--- TEMPPP (green fn!)
-function AccentComponent._callAction(self: AccentComponent, ActionName: string, ...: any): any?
-	for i, v in Config.Actions :: any do
-		if i ~= ActionName then
-			continue
-		end
-
-		for _, j in self._actions do
-			if j.Handler == v then
-				return j.Handler(..., j.Props)
-			end
-		end
-	end
-
-	return false
-end
-
-function AccentComponent._cloneInstance(self: AccentComponent, Position: Vector3): (Instance, BasePart?)
+function AccentComponent._clone(self: AccentComponent, Position: Vector3): Instance
 	local Clone = self.Instance:Clone()
-	local Primary = nil
 
 	if Clone:IsA("BasePart") then
-		Primary = Clone
 		Clone.Position = Position
 	elseif Clone:IsA("Model") then
-		Primary = Clone.PrimaryPart or nil
 		Clone:PivotTo(CFrame.new(Position))
 	end
 
-	if Primary then
-		Primary.CollisionGroup = "SmallJunk"
-	end
-
-	table.insert(self.CloneStorage, Clone)
-
-	return Clone, Primary
-end
-
-function AccentComponent._createPart(self: AccentComponent, Position: Vector3): Part
-	local Clone = CACHED_PART:Clone()
-
-	self:_callAction("MutateSpawnPart", Clone)
-	self:_callAction("AddCenterAttachment", Clone)
-
-	Clone.Position = Position
-	Clone.Parent = self.ParentTo
+	self.CloneStorage[Clone] = true
 
 	return Clone
 end
