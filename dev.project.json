@@ -13,19 +13,15 @@
                 "Repertoire": {
                     "$path": "src"
                 }
+            },
+            "Assets": {
+                "$ignoreUnknownInstances": true,
+                "$className": "Folder"
             }
         },
 
         "ServerScriptService": {
-            "$path": "tests/server"
-        },
-
-        "StarterPlayer": {
-            "$className": "StarterPlayer",
-
-            "StarterPlayerScripts": {
-                "$path": "tests/client"
-            }
+            "$path": "testing"
         }
     }
 }

@@ -37,7 +37,8 @@ local function ApplyAssetScale(Inst: Instance, Scale: number, UseMultiplication:
 	if Inst:IsA("BasePart") then
 		Inst.Size = UseMultiplication and Inst.Size * Scale or Vector3.one * Scale
 	elseif Inst:IsA("Model") then
-		-- Inst.Scale = UseMultiplication and Inst.Scale * Scale or Vector3.one * Scale
+		local ScaleTo = UseMultiplication and Inst:GetScale() * Scale or Scale
+		Inst:ScaleTo(ScaleTo)
 	end
 end
 
@@ -126,11 +127,11 @@ Config.Reactions = {
 	end,
 
 	TweenScale = function(Inst: Instance, Properties: { Scale: number, TweenInfo: TweenInfo })
-		return Promise.new(function(resolve)
-			local Scale = Properties.Scale or 0.001
-			local Info = Properties.TweenInfo
+		local Scale = (Properties and Properties.Scale) and Properties.Scale or 0.001
+		local Info = (Properties and Properties.TweenInfo) and Properties.TweenInfo or TweenInfo.new(1)
 
-			local Tween
+		return Promise.new(function(resolve)
+			local Tween: Tween?
 
 			if Inst:IsA("BasePart") then
 				Tween = TweenService:Create(Inst, Info, { Size = Vector3.one * Scale })
@@ -140,55 +141,82 @@ Config.Reactions = {
 
 				local ChangedConnection
 				ChangedConnection = NumVal.Changed:Connect(function()
-					Inst:ScaleTo(NumVal.Value)
+					(Inst :: Model):ScaleTo(NumVal.Value)
 				end)
 
 				Tween = TweenService:Create(NumVal, Info, { Value = Scale })
 
 				Tween.Completed:Once(function()
-					ChangedConnection:Disconnect()
+					if ChangedConnection then
+						ChangedConnection:Disconnect()
+					end
 					resolve()
 				end)
 			else
 				warn(`[{script.Name}] Unknown Instance type. Should be a BasePart or Model`)
 			end
 
-			Tween:Play()
+			if Tween then
+				Tween:Play()
+			end
 
-			if Inst:IsA("BasePart") then
-				Tween.Completed:Once(resolve)
+			if Inst:IsA("BasePart") and Tween then
+				Tween.Completed:Once(function()
+					resolve()
+				end)
 			end
 		end)
 	end,
 
-	RandomColorPalette = function(Inst: Instance, Properties: { Palette: { Color3 } })
-		return Promise.try(function()
-			local Palette = Properties.Palette
-			if not Palette then
-				return
-			end
+	RandomColorPalette = function(Inst: Instance, Properties: { Palette: { Color3 }, Recursive: boolean })
+		local Palette = Properties.Palette
+		local Recursive = (Properties and Properties.Recursive) and Properties.Recursive or false
 
-			local Chosen = Palette[math.random(1, #Palette)]
+		if not Palette then
+			return
+		end
 
-			if Inst:IsA("BasePart") then
-				Inst.Color = Chosen
-			else
-				for _, Part in Inst:GetDescendants() do
-					if not Part:IsA("BasePart") then
-						continue
-					end
+		local Chosen = Palette[math.random(1, #Palette)]
 
-					Part.Color = Chosen
+		if Inst:IsA("BasePart") then
+			Inst.Color = Chosen
+		end
+
+		if Inst:IsA("Model") or Recursive then
+			for _, Part in Inst:GetDescendants() do
+				if not Part:IsA("BasePart") then
+					continue
 				end
+
+				Part.Color = Chosen
 			end
-		end)
+		end
 	end,
 
 	SetScale = function(Inst: Instance, Properties: { Scale: number, UseMultiplication: boolean? })
 		local Scale = Properties.Scale or 1
-		local UseMultiplication = Properties.UseMultiplication or true
+		local UseMultiplication = (Properties.UseMultiplication ~= nil) and Properties.UseMultiplication or true
 
 		ApplyAssetScale(Inst, Scale, UseMultiplication)
+	end,
+
+	SetMaterial = function(Inst: BasePart, Properties: { Material: Enum.Material, Recursive: boolean })
+		local Recursive = (Properties and Properties.Recursive) and Properties.Recursive or false
+		local Material = (Properties and Properties.Material) and Properties.Material or Enum.Material.Plastic
+
+		if Inst:IsA("BasePart") then
+			Inst.Material = Material
+		end
+
+		if Inst:IsA("Model") or Recursive then
+			for _, Part in Inst:GetDescendants() do
+				if not Part:IsA("BasePart") then
+					continue
+				end
+
+				Part.Material = Material
+			end
+		end
 	end,
 
 	RandomScale = function(
@@ -197,7 +225,13 @@ Config.Reactions = {
 	)
 		local MinScale, MaxScale, Weight = Properties.MinScale, Properties.MaxScale, Properties.Weight
 		local Scale = math.random(MinScale or 1, MaxScale or 1) / (Weight or 1)
-		local UseMultiplication = Properties.UseMultiplication or true
+		local UseMultiplication
+
+		if Properties and Properties.UseMultiplication ~= nil then
+			UseMultiplication = Properties.UseMultiplication
+		else
+			UseMultiplication = true
+		end
 
 		ApplyAssetScale(Inst, Scale, UseMultiplication)
 	end,

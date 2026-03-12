@@ -16,7 +16,8 @@ CACHED_PART.CanQuery = false
 CACHED_PART.Anchored = true
 CACHED_PART.Transparency = 1
 
-local COLLISION_GROUP = "PrimaryJunk"
+local CONTAINER = workspace:WaitForChild("_repertoire") :: Folder
+local COLLISION_GROUP = "SmallJunk"
 
 local DEFAULT_COUNT = 1
 local DEFAULT_TIMEOUT = 5
@@ -31,20 +32,13 @@ local PART_CLASS_NAMES = {
 }
 
 local GET_ID: () -> number
-local GET_SPAWN_ID: () -> number
 
 do
 	local lastId = 0
-	local lastSpawnId = 0
 
 	GET_ID = function()
 		lastId += 1
 		return lastId
-	end
-
-	GET_SPAWN_ID = function()
-		lastSpawnId += 1
-		return lastSpawnId
 	end
 end
 
@@ -65,6 +59,12 @@ local Builder = {}
 Builder.__index = Builder
 
 type Handler<T, P> = (T, P) -> ...any?
+
+type SpawnGroup = {
+	Remaining: number,
+	Resolve: () -> (),
+	Container: Part?,
+}
 
 type LifecycleSignal = Signal.Signal<Instance>
 
@@ -88,7 +88,7 @@ export type AccentComponent = typeof(setmetatable(
 		OnTouched: LifecycleSignal,
 
 		_activeClones: { [Instance]: number },
-		_spawns: { [number]: { Container: Part?, Remaining: number } },
+		_spawns: { [Instance]: SpawnGroup },
 		_actions: { [Handler<any, any>]: BuilderConfig<any, any> },
 		_reactions: { [LifecycleSignal]: { BuilderConfig<any, any> } },
 		_alive: boolean,
@@ -173,7 +173,7 @@ function AccentComponent.new(Target: Instance, Settings: any?): AccentComponent
 		Settings = MergedSettings,
 		Logging = MergedSettings.Logging or false,
 
-		ParentTo = workspace :: Instance,
+		ParentTo = CONTAINER :: Instance,
 
 		OnSpawned = Signal.new(),
 		OnDespawned = Signal.new(),
@@ -184,7 +184,7 @@ function AccentComponent.new(Target: Instance, Settings: any?): AccentComponent
 		_actions = {},
 		_reactions = {},
 		_alive = true,
-	}, AccentComponent)
+	}, AccentComponent) :: AccentComponent
 
 	ACTIVE_COMPONENTS[self.Id] = self
 	startScheduler()
@@ -214,27 +214,25 @@ function AccentComponent.AddReaction<T, P>(self: AccentComponent, Handler: Handl
 	return Builder.new(ConfigData, self)
 end
 
-function AccentComponent.Spawn(self: AccentComponent, Position: Vector3, parent: Instance?): Promise.Promise
+function AccentComponent.Spawn(self: AccentComponent, Position: Vector3, Parent: Instance?): Promise.Promise
 	if not self._alive then
 		return Promise.reject("Accent destroyed")
 	end
 
-	local SpawnId = GET_SPAWN_ID()
+	return Promise.new(function(Resolve)
+		local IsPartOrModel = isBasePartOrModelClass(self.Instance)
 
-	local IsPartOrModel = isBasePartOrModelClass(self.Instance)
-	local Container: Part? = nil
+		local Group: SpawnGroup = {
+			Remaining = 0,
+			Resolve = Resolve,
+			Container = nil,
+		}
 
-	if not IsPartOrModel then
-		Container = self:_createPart(Position)
-	end
+		if not IsPartOrModel then
+			Group.Container = self:_createPart(Position)
+		end
 
-	self._spawns[SpawnId] = {
-		Container = Container,
-		Remaining = 0,
-	}
-
-	return Promise.try(function()
-		self.ParentTo = parent or self.ParentTo
+		self.ParentTo = Parent or self.ParentTo
 
 		local Count = self:_runAction(Config.Actions.Count)
 			or self:_runAction(Config.Actions.RandomCount)
@@ -257,10 +255,9 @@ function AccentComponent.Spawn(self: AccentComponent, Position: Vector3, parent:
 
 		for _ = 1, Count do
 			local Clone = self:_clone(Position)
-			Clone:SetAttribute("__repertoire__spawnId", SpawnId)
-			Clone.Parent = Container or self.ParentTo
+			Clone.Parent = Group.Container or self.ParentTo
 
-			self._spawns[SpawnId].Remaining += 1
+			Group.Remaining += 1
 
 			if IsParticleEmitter then
 				(Clone :: ParticleEmitter):Emit(EmitCount)
@@ -268,8 +265,8 @@ function AccentComponent.Spawn(self: AccentComponent, Position: Vector3, parent:
 				(Clone :: Sound):Play()
 			end
 
-			local Expire = os.clock() + Lifetime
-			self._activeClones[Clone] = Expire
+			self._activeClones[Clone] = os.clock() + Lifetime
+			self._spawns[Clone] = Group
 
 			self:_executeReactions(self.OnSpawned, Clone)
 				:andThen(function()
@@ -290,28 +287,26 @@ function AccentComponent.Despawn(self: AccentComponent, Target: Instance): Promi
 	self.OnDespawned:Fire(Target)
 
 	return self:_executeReactions(self.OnDespawned, Target):timeout(DEFAULT_TIMEOUT):finally(function()
-		if Target then
-			Target:Destroy()
-		end
-
-		local SpawnId = Target:GetAttribute("__repertoire__spawnId") :: number?
-		if not SpawnId then
+		if not self._alive then
 			return
 		end
 
-		local Spawn = self._spawns[SpawnId]
-		if not Spawn then
+		local Group = self._spawns[Target]
+		if not Group then
 			return
 		end
 
-		Spawn.Remaining -= 1
+		self._spawns[Target] = nil
+		Group.Remaining -= 1
 
-		if Spawn.Remaining <= 0 then
-			if Spawn.Container then
-				Spawn.Container:Destroy()
+		Target:Destroy()
+
+		if Group.Remaining <= 0 then
+			if Group.Container then
+				Group.Container:Destroy()
 			end
 
-			self._spawns[SpawnId] = nil
+			Group.Resolve()
 		end
 	end)
 end
@@ -338,9 +333,12 @@ function AccentComponent.Destroy(self: AccentComponent)
 		Clone:Destroy()
 	end
 
-	for _, Spawn in self._spawns do
-		if Spawn.Container then
-			Spawn.Container:Destroy()
+	for _, Group in self._spawns do
+		if Group.Container then
+			Group.Container:Destroy()
+		end
+		if Group.Resolve then
+			Group.Resolve()
 		end
 	end
 
@@ -418,7 +416,7 @@ function AccentComponent._clone(self: AccentComponent, Position: Vector3): (Inst
 
 	if Clone:IsA("BasePart") then
 		Primary = Clone
-		Clone.Position = Position
+		Clone:PivotTo(CFrame.new(Position))
 	elseif Clone:IsA("Model") then
 		Primary = Clone.PrimaryPart
 		Clone:PivotTo(CFrame.new(Position))
