@@ -219,6 +219,33 @@ Config.Reactions = {
 		end
 	end,
 
+	AddTrail = function(
+		Inst: BasePart,
+		Properties: { ColorSequence: ColorSequence, Scale: number, Width: Vector2, Lifetime: number }
+	)
+		local Scale = Properties and Properties.Scale or 0.5
+		local ColorSequence = Properties and Properties.ColorSequence or ColorSequence.new(Color3.new(1, 1, 1))
+		local Width = Properties and Properties.Width or Vector2.new(1, 0.5)
+
+		local A0 = Instance.new("Attachment")
+		local A1 = Instance.new("Attachment")
+		local Trail = Instance.new("Trail")
+
+		A0.Parent = Inst
+		A1.Parent = Inst
+		Trail.Parent = Inst
+
+		local AOffsetSize = (Inst.Size / 2) * Scale
+		A0.Position = Vector3.one * AOffsetSize
+		A1.Position = Vector3.one * -AOffsetSize
+
+		Trail.Color = ColorSequence
+		Trail.WidthScale = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, Width.X),
+			NumberSequenceKeypoint.new(1, Width.Y),
+		})
+	end,
+
 	RandomScale = function(
 		Inst: Instance,
 		Properties: { MinScale: number, MaxScale: number, Weight: number?, UseMultiplication: boolean? }
