@@ -131,7 +131,7 @@ Config.Reactions = {
 		local Info = (Properties and Properties.TweenInfo) and Properties.TweenInfo or TweenInfo.new(1)
 
 		return Promise.new(function(resolve)
-			local Tween: Tween?
+			local Tween: Tween
 
 			if Inst:IsA("BasePart") then
 				Tween = TweenService:Create(Inst, Info, { Size = Vector3.one * Scale })

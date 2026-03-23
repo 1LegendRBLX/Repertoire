@@ -3,12 +3,24 @@ local Debris = game:GetService("Debris")
 local ForceMod = {}
 
 local LinearVelocity = Instance.new("LinearVelocity")
+local AngularVelocity = Instance.new("AngularVelocity")
+local ForceCaches = {
+	["LinearForce"] = LinearVelocity,
+	["AngularForce"] = AngularVelocity,
+}
+
 local Attachment = Instance.new("Attachment")
+
+AngularVelocity.MaxTorque = math.huge
+AngularVelocity.Enabled = false
 
 LinearVelocity.MaxForce = math.huge
 LinearVelocity.Enabled = false
 
+export type ForceTypes = "LinearForce" | "AngularForce"
+
 export type Settings = {
+	ForceType: ForceTypes,
 	Velocity: number,
 	Direction: Vector3,
 	RelativeTo: Enum.ActuatorRelativeTo,
@@ -17,6 +29,7 @@ export type Settings = {
 }
 
 ForceMod.DefaultSettings = {
+	ForceType = "LinearForce",
 	Velocity = 10,
 	Direction = Vector3.new(0, 0, -1),
 	RelativeTo = "Attachment0",
@@ -37,29 +50,14 @@ local function ApplySpread(direction: Vector3, spread: Vector2): Vector3
 end
 
 local function CreateForce(Parent, Settings: Settings)
-	local Velocity = ForceMod.DefaultSettings.Velocity
-	local Direction = ForceMod.DefaultSettings.Direction
-	local RelativeTo = ForceMod.DefaultSettings.RelativeTo
-	local Spread = ForceMod.DefaultSettings.Spread
-	local RandomRange = ForceMod.DefaultSettings.RandomRange
+	local ForceType = Settings and Settings.ForceType or ForceMod.DefaultSettings.ForceType
+	local Velocity = Settings and Settings.Velocity or ForceMod.DefaultSettings.Velocity
+	local Direction = Settings and Settings.Direction or ForceMod.DefaultSettings.Direction
+	local RelativeTo = Settings and Settings.RelativeTo or ForceMod.DefaultSettings.RelativeTo
+	local Spread = Settings and Settings.Spread or ForceMod.DefaultSettings.Spread
+	local RandomRange = Settings and Settings.RandomRange or ForceMod.DefaultSettings.RandomRange
 
-	if Settings.Velocity then
-		Velocity = Settings.Velocity
-	end
-	if Settings.Direction then
-		Direction = Settings.Direction
-	end
-	if Settings.RelativeTo then
-		RelativeTo = Settings.RelativeTo
-	end
-	if Settings.Spread then
-		Spread = Settings.Spread
-	end
-	if Settings.RandomRange then
-		RandomRange = Settings.RandomRange
-	end
-
-	local new_velocity = LinearVelocity:Clone()
+	local new_velocity = ForceCaches[ForceType]:Clone()
 	local v_attachment
 
 	new_velocity.RelativeTo = RelativeTo
@@ -82,7 +80,11 @@ local function CreateForce(Parent, Settings: Settings)
 	local random_multiplier = math.random() * (maxMult - minMult) + minMult
 	random_multiplier = math.clamp(random_multiplier, 0.1, LinearVelocity.MaxForce)
 
-	new_velocity.VectorVelocity = ApplySpread(Direction, Spread) * (Velocity * random_multiplier)
+	if ForceType == "LinearForce" then
+		new_velocity.VectorVelocity = ApplySpread(Direction, Spread) * (Velocity * random_multiplier)
+	elseif ForceType == "AngularForce" then
+		new_velocity.AngularVelocity = ApplySpread(Direction, Spread) * (Velocity * random_multiplier)
+	end
 
 	if v_attachment ~= Parent then
 		v_attachment.Parent = Parent
@@ -99,6 +101,21 @@ function ForceMod.ApplyConstant(Parent: Instance, Settings: Settings)
 
 	local Force = CreateForce(Parent, Settings)
 	return Force
+end
+
+function ForceMod.ApplyAngularForce(Parent: BasePart? | Model, Settings: Settings)
+	if Parent and Parent:IsA("Model") then
+		Parent = Parent.PrimaryPart or nil
+	end
+
+	if not Parent then
+		return
+	end
+
+	local Force, VelocityAttachment = CreateForce(Parent, Settings)
+	Debris:AddItem(Force, 0.2)
+
+	return Force, VelocityAttachment
 end
 
 function ForceMod.ApplyForce(Parent: BasePart? | Model, Settings: Settings)
