@@ -42,6 +42,20 @@ do
 	end
 end
 
+local function deepCopy<T>(tbl: T): T
+	if type(tbl) ~= "table" then
+		return tbl
+	end
+
+	local copy = table.create(#tbl)
+
+	for k, v in tbl do
+		copy[k] = deepCopy(v)
+	end
+
+	return (copy :: any) :: T
+end
+
 local function isBasePartOrModelClass(Part: Instance): boolean
 	for _, ClassName in PART_CLASS_NAMES do
 		if ClassName == Part.ClassName then
@@ -317,6 +331,56 @@ function AccentComponent.Update(self: AccentComponent, Now: number)
 			self:Despawn(Clone)
 		end
 	end
+end
+
+function AccentComponent.CloneProperties(self: AccentComponent, Source: AccentComponent | { [any]: any })
+	if Source._actions or Source._reactions then
+		if Source._actions then
+			for Handler, Data in Source._actions :: any do
+				self._actions[Handler] = {
+					Handler = Handler,
+					Connection = nil,
+					Props = deepCopy(Data.Props),
+				}
+			end
+		end
+
+		if Source._reactions then
+			for Sig, ReactionList in Source._reactions :: any do
+				self._reactions[Sig] = self._reactions[Sig] or {}
+
+				for _, Reaction in ReactionList do
+					table.insert(self._reactions[Sig], {
+						Handler = Reaction.Handler,
+						Connection = nil,
+						Props = deepCopy(Reaction.Props),
+					})
+				end
+			end
+		end
+
+		return self
+	end
+
+	if (Source :: any).Actions then
+		for _, Action in (Source :: any).Actions do
+			self:AddAction(Action.Handler):Props(deepCopy(Action.Props))
+		end
+	end
+
+	if (Source :: any).Reactions then
+		for _, Reaction in (Source :: any).Reactions do
+			local Sig = self[Reaction.Signal]
+
+			if not Sig then
+				error(`Invalid signal: {Reaction.Signal}`)
+			end
+
+			self:AddReaction(Reaction.Handler):Hook(Sig):Props(deepCopy(Reaction.Props))
+		end
+	end
+
+	return self
 end
 
 function AccentComponent.Destroy(self: AccentComponent)
