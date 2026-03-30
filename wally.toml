@@ -2,7 +2,7 @@
 name = "1legendrblx/repertoire"
 authors = ["Legend <noahross06@gmail.com>", "Jaeymo <jaey.cyber@gmail.com>"]
 description = "Front-end orchestrator"
-version = "1.2.0"
+version = "1.3.0"
 license = "MIT"
 exclude = ["**"]
 include = ["src", "src/**", "wally.toml", "wally.lock", "default.project.json", "README.md"]
